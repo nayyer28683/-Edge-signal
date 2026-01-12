@@ -1,0 +1,255 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Institutional Edge V5.2</title>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
+  <style>
+    :root {
+      --bg:#0a0a14; --card:#141424; --text:#e0e0ff; --green:#00d395; --red:#ff4757;
+      --yellow:#ffa502; --blue:#0097e6; --border:#25253a; --danger:#ff3838; --inst:#0084ff;
+      --whale:#a333ff;
+    }
+    body { margin:0; background:var(--bg); color:var(--text); font-family:system-ui,sans-serif; }
+    .header { background:linear-gradient(90deg,#0a0a14,#141424); padding:1.2rem; border-bottom:2px solid var(--border); position:sticky; top:0; z-index:10; text-align:center; }
+    .logo { font-size:1.8rem; font-weight:800; background:linear-gradient(90deg,var(--blue),#8c7ae6); -webkit-background-clip:text; -webkit-text-fill-color:transparent; }
+    .regime { display:inline-block; padding:0.5rem 1rem; border-radius:6px; font-weight:700; font-size:0.9rem; margin-left:1rem; }
+    .accumulation { background:rgba(0,211,149,0.15); color:var(--green); border:1px solid var(--green); }
+    .distribution { background:rgba(255,71,87,0.15); color:var(--red); border:1px solid var(--red); }
+    .container { max-width:1600px; margin:0 auto; padding:1.5rem; }
+    input { width:100%; padding:1rem; background:var(--card); border:1px solid var(--border); border-radius:8px; color:var(--text); font-size:1rem; margin-bottom:1.5rem; }
+    .tabs { display:grid; grid-template-columns:repeat(3,1fr); gap:1rem; margin:1.5rem 0; }
+    .tab { background:var(--card); padding:1.2rem; border-radius:8px; text-align:center; cursor:pointer; border:1px solid var(--border); transition:all 0.2s; }
+    .tab.active { border-color:var(--blue); box-shadow:0 0 12px rgba(0,151,230,0.25); }
+    .grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(420px,1fr)); gap:1.2rem; }
+    .card { background:var(--card); border:1px solid var(--border); border-radius:10px; padding:1.2rem; position:relative; }
+    .card:hover { border-color:var(--inst); transform:translateY(-3px); }
+    .source { position:absolute; top:0.8rem; right:0.8rem; font-size:0.7rem; color:#555; background:#000; padding:0.2rem 0.5rem; border-radius:4px; }
+    .price { font-size:1.5rem; font-weight:700; }
+    .change { font-size:0.95rem; }
+    .signal-grid { display:grid; grid-template-columns:repeat(3,1fr); gap:0.8rem; margin:1rem 0; }
+    .sig-box { background:#1c1c2e; padding:0.8rem; border-radius:6px; text-align:center; }
+    .sig-val { font-weight:700; font-size:1.1rem; }
+    .tag { display:inline-block; padding:0.3rem 0.7rem; border-radius:4px; font-size:0.75rem; font-weight:700; margin:0.3rem; }
+    .long { background:rgba(0,211,149,0.2); color:var(--green); border:1px solid var(--green); }
+    .short { background:rgba(255,71,87,0.2); color:var(--red); border:1px solid var(--red); }
+    .loading, .error { text-align:center; padding:4rem 1rem; color:#888; }
+    .spinner { width:2rem; height:2rem; border:4px solid #333; border-top:4px solid var(--blue); border-radius:50%; animation:spin 1s linear infinite; margin:0 auto 1rem; }
+    @keyframes spin { to { transform:rotate(360deg); } }
+    #backtestBox { background:#1c1c2e; border:1px solid var(--border); border-radius:10px; padding:1rem; margin:1.5rem 0; text-align:center; }
+    #backtestBox h3 { margin:0 0 0.8rem 0; }
+    #meter { height:20px; background:#333; border-radius:10px; overflow:hidden; margin:0.8rem 0; }
+    #fill { height:100%; width:0%; background:var(--green); transition:width 0.5s; }
+    @media (max-width:900px) { .grid, .tabs, .signal-grid { grid-template-columns:1fr; } }
+  </style>
+</head>
+<body>
+<div class="header">
+  <div class="logo">Institutional Edge V5.2</div>
+  <div id="regime" class="regime distribution">Distribution Phase</div>
+</div>
+<div class="container">
+  <input id="search" placeholder="Search symbol (e.g. BTC, ETH, TAO)" autocomplete="off">
+  <div class="tabs">
+    <div class="tab active" data-tf="scalp">Scalp</div>
+    <div class="tab" data-tf="day">Day Trade</div>
+    <div class="tab" data-tf="swing">Swing</div>
+  </div>
+  <div id="grid" class="grid"></div>
+  <div id="loading" class="loading"><div class="spinner"></div>Initializing scan engine...</div>
+  <div id="error" class="error" style="display:none;"></div>
+
+  <div id="backtestBox">
+    <h3>Live Signal Performance (Today)</h3>
+    <div id="stats">Loading...</div>
+    <div id="meter"><div id="fill"></div></div>
+    <div id="recentHits"></div>
+    <button id="shareBtn" style="margin-top:1rem; padding:0.8rem 1.5rem; background:var(--blue); color:white; border:none; border-radius:8px; cursor:pointer;">
+      📸 Screenshot & Log
+    </button>
+  </div>
+
+  <div class="footer" style="margin-top:2rem; padding:1rem; background:var(--card); border-radius:8px; text-align:center; font-size:0.85rem; color:#777;">
+    Public APIs • Not financial advice • Educational use only
+  </div>
+</div>
+
+<script>
+const $ = s => document.querySelector(s);
+let currentTf = 'scalp';
+
+async function fetchJson(url) {
+  try {
+    const res = await fetch(url);
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    return await res.json();
+  } catch (e) {
+    throw e;
+  }
+}
+
+function showError(msg) {
+  $('#loading').style.display = 'none';
+  $('#error').style.display = 'block';
+  $('#error').innerHTML = `Error: ${msg}<br>Check console and .env`;
+}
+
+function card(c, sig) {
+  const dirClass = sig.direction === 'LONG' ? 'long' : sig.direction === 'SHORT' ? 'short' : '';
+  const arrow = sig.direction === 'LONG' ? '↑' : sig.direction === 'SHORT' ? '↓' : '→';
+  const w = c.whale_flows || {};
+  const prob = sig.whaleProb || 60;
+  return `
+    <div class="card">
+      <div class="source">${c.source}</div>
+      <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:1rem;">
+        <div>
+          <div style="font-size:1.4rem;font-weight:800;">${c.symbol}</div>
+          <div style="font-size:0.8rem;color:#888;">${new Date(c.timestamp).toLocaleTimeString()}</div>
+        </div>
+        <div style="text-align:right;">
+          <div class="price" style="color:${c.change24h>=0?'var(--green)':'var(--red)'}">
+            $${Number(c.price).toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits: c.price<10?6:2})}
+          </div>
+          <div style="color:${c.change24h>=0?'var(--green)':'var(--red)'}">
+            ${c.change24h.toFixed(2)}%
+          </div>
+        </div>
+      </div>
+      <div class="signal-grid">
+        <div class="sig-box">
+          <div style="font-size:0.8rem;color:#888;">Direction</div>
+          <div class="sig-val" style="color:${sig.direction==='LONG'?'var(--green)':sig.direction==='SHORT'?'var(--red)':'var(--yellow)'}">
+            ${arrow} ${sig.direction}
+          </div>
+        </div>
+        <div class="sig-box">
+          <div style="font-size:0.8rem;color:#888;">Label</div>
+          <div class="sig-val">${sig.label}</div>
+        </div>
+        <div class="sig-box">
+          <div style="font-size:0.8rem;color:#888;">Score</div>
+          <div class="sig-val">${sig.score}%</div>
+        </div>
+      </div>
+      <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:0.8rem;font-size:0.9rem;">
+        <div>Whale Prob: <strong>${prob}%</strong></div>
+        <div>Funding: <strong>${c.funding ? c.funding.toFixed(4)+'%' : '–'}</strong></div>
+        <div>Risk: <strong style="color:${sig.risk==='HIGH'?'var(--danger)':'inherit'}">${sig.risk}</strong></div>
+        <div>Whale count: <strong>${w.whale_count || '–'}</strong></div>
+      </div>
+      <div style="margin-top:1rem;">
+        <span class="tag ${dirClass}">${sig.target || '–'}</span>
+        ${sig.score >= 80 ? '<span class="tag" style="background:rgba(163,51,255,0.2);color:var(--whale);">HIGH EDGE</span>' : ''}
+      </div>
+    </div>
+  `;
+}
+
+async function refresh() {
+  $('#grid').innerHTML = '';
+  $('#loading').style.display = 'block';
+  $('#error').style.display = 'none';
+  const url = `/api/signals/${currentTf}?limit=30`;  // no threshold
+  try {
+    const data = await fetchJson(url);
+    $('#loading').style.display = 'none';
+    if (data.signals?.length > 0) {
+      data.signals.forEach(item => {
+        $('#grid').innerHTML += card(item, item.signal);
+      });
+    } else {
+      $('#grid').innerHTML = '<div class="loading">No data available right now</div>';
+    }
+    $('#regime').textContent = (data.phase || 'unknown').toUpperCase() + ' PHASE';
+    $('#regime').className = `regime ${data.phase === 'accumulation' ? 'accumulation' : 'distribution'}`;
+  } catch (e) {
+    showError(e.message);
+  }
+}
+
+async function updateBacktest() {
+  try {
+    const data = await fetchJson('/api/stats');
+    $('#stats').innerHTML = `
+      Today: ${data.total_today} signals<br>
+      Hits: ${data.hits_today} (${data.hit_rate}%)
+    `;
+    $('#fill').style.width = `${data.hit_rate}%`;
+    let hitsHtml = '<strong>Recent hits:</strong><br>';
+    data.recent_hits.forEach(h => {
+      hitsHtml += `${h.symbol} ${h.direction} ${h.score}% → +${h.actual_move}%<br>`;
+    });
+    $('#recentHits').innerHTML = hitsHtml || 'No evaluated hits yet';
+  } catch (e) {
+    $('#stats').innerHTML = 'Stats loading failed';
+  }
+}
+
+// Screenshot + log
+$('#shareBtn').onclick = async () => {
+  const canvas = await html2canvas(document.querySelector('.container') || document.body, {scale: 2});
+  const imgData = canvas.toDataURL('image/png');
+
+  // Download
+  const link = document.createElement('a');
+  link.download = `signal-${Date.now()}.png`;
+  link.href = imgData;
+  link.click();
+
+  // Log to file via backend (send base64)
+  try {
+    await fetch('/api/log_screenshot', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({
+        image: imgData,
+        timestamp: new Date().toISOString(),
+        stats: $('#stats').textContent.trim()
+      })
+    });
+    alert('Screenshot downloaded & logged!');
+  } catch (e) {
+    alert('Screenshot downloaded, but log failed');
+  }
+};
+
+// Tab switching
+document.querySelectorAll('.tab').forEach(tab => {
+  tab.addEventListener('click', () => {
+    document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+    tab.classList.add('active');
+    currentTf = tab.dataset.tf;
+    refresh();
+  });
+});
+
+// Search
+$('#search').addEventListener('input', e => {
+  const q = e.target.value.trim().toUpperCase();
+  if (q.length > 1) {
+    fetchJson(`/api/coin/${q}`)
+      .then(data => {
+        $('#grid').innerHTML = '';
+        if (data.price_data) {
+          const sig = data.signals[currentTf];
+          $('#grid').innerHTML = card(data.price_data, sig);
+        } else {
+          $('#grid').innerHTML = '<div class="loading">No data for ' + q + '</div>';
+        }
+      })
+      .catch(e => showError(e.message));
+  } else if (q === '') {
+    refresh();
+  }
+});
+
+// Auto-refresh
+refresh();
+setInterval(refresh, 90000);
+setInterval(updateBacktest, 30000); // update stats every 30s
+updateBacktest(); // initial
+</script>
+</body>
+</html>
